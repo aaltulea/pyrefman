@@ -22,10 +22,26 @@ text_looks_like_internet_error() {
   local text
   text="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
   case "$text" in
-    *"unable to connect to the remote server"*|*"could not resolve host"*|*"temporary failure in name resolution"*|*"name or service not known"*|*"no such host is known"*|*"network is unreachable"*|*"connection refused"*|*"connection reset"*|*"connection aborted"*|*"timed out"*|*"timeout"*|*"failed to download"*|*"forbidden by its access permissions"*|*"eacces"*|*"ssl handshake"*|*"tls handshake"*)
+    *"unable to connect to the remote server"*|*"could not resolve host"*|*"temporary failure in name resolution"*|*"name or service not known"*|*"no such host is known"*|*"network is unreachable"*|*"connection refused"*|*"connection reset"*|*"connection aborted"*|*"timed out"*|*"timeout"*|*"failed to download"*|*"connect eacces"*|*"errno -4092"*|*"ssl handshake"*|*"tls handshake"*)
       return 0
       ;;
   esac
+  return 1
+}
+
+find_python_3_12() {
+  local candidate
+  for candidate in python3.12 python3 python; do
+    if ! command -v "$candidate" >/dev/null 2>&1; then
+      continue
+    fi
+
+    if "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 12) else 1)' >/dev/null 2>&1; then
+      command -v "$candidate"
+      return 0
+    fi
+  done
+
   return 1
 }
 
@@ -98,8 +114,21 @@ export PLAYWRIGHT_BROWSERS_PATH="$SCRIPT_DIR/.playwright"
 
 if [ ! -x "$VENV_PYTHON" ]; then
   echo "Creating project virtual environment..."
-  run_with_internet_retry "Creating the project virtual environment" \
-    "$UV_BIN" venv "$SCRIPT_DIR/.venv" --python 3.12 --seed || pause_and_exit 1
+  PYTHON_SPECIFIER="$(find_python_3_12 || true)"
+  VENV_COMMAND=(
+    "$UV_BIN"
+    venv
+    "$SCRIPT_DIR/.venv"
+    --python
+    "${PYTHON_SPECIFIER:-3.12}"
+    --seed
+    --clear
+  )
+  if [ -n "$PYTHON_SPECIFIER" ]; then
+    VENV_COMMAND+=(--no-python-downloads)
+  fi
+
+  run_with_internet_retry "Creating the project virtual environment" "${VENV_COMMAND[@]}" || pause_and_exit 1
 fi
 
 "$VENV_PYTHON" "$SCRIPT_DIR/scripts/launch.py"
