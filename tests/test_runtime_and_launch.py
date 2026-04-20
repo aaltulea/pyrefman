@@ -72,6 +72,33 @@ class RuntimeAndLaunchTests(unittest.TestCase):
         self.assertTrue(runtime.input_file_requires_pandoc(Path("x.docx")))
 
     def test_launch_helpers(self) -> None:
+        class AsciiOnlyBufferStream:
+            encoding = "ascii"
+
+            def __init__(self) -> None:
+                self.buffer = io.BytesIO()
+
+            def write(self, text: str) -> int:
+                text.encode(self.encoding)
+                return len(text)
+
+            def flush(self) -> None:
+                return None
+
+        class AsciiOnlyTextStream:
+            encoding = "ascii"
+
+            def __init__(self) -> None:
+                self.writes: list[str] = []
+
+            def write(self, text: str) -> int:
+                text.encode(self.encoding)
+                self.writes.append(text)
+                return len(text)
+
+            def flush(self) -> None:
+                return None
+
         with workspace_dir() as tmp_path:
             state_path = tmp_path / "state.json"
             with patch.object(launch, "STATE_FILE", state_path):
@@ -87,17 +114,43 @@ class RuntimeAndLaunchTests(unittest.TestCase):
         with patch("subprocess.run", return_value=success), patch("sys.stderr", new=io.StringIO()):
             launch.run_command(["echo", "ok"])
 
+        buffer_stream = AsciiOnlyBufferStream()
+        launch.write_stream_text("progress ●", buffer_stream)
+        self.assertEqual(buffer_stream.buffer.getvalue().decode("ascii"), "progress ?\n")
+
+        text_stream = AsciiOnlyTextStream()
+        launch.write_stream_text("", text_stream)
+        self.assertEqual(text_stream.writes, [])
+        launch.write_stream_text("status ●", text_stream)
+        self.assertEqual(text_stream.writes, ["status ?\n"])
+
         failure = SimpleNamespace(stdout="", stderr="bad", returncode=1)
         with patch("subprocess.run", return_value=failure):
             with self.assertRaises(subprocess.CalledProcessError):
                 launch.run_command(["bad"])
 
         self.assertTrue(launch.text_looks_like_internet_error("timeout on connection"))
+        self.assertTrue(launch.text_looks_like_internet_error("socket blocked with WinError 10013"))
+        self.assertFalse(
+            launch.text_looks_like_internet_error(
+                "ERROR: Could not install packages due to an OSError: [Errno 13] Permission denied"
+            )
+        )
         self.assertFalse(launch.text_looks_like_internet_error("plain error"))
         self.assertTrue(launch.is_internet_related_error(HTTPError("x", 500, "bad", None, None)))
         self.assertTrue(launch.is_internet_related_error(URLError("offline")))
         self.assertTrue(launch.is_internet_related_error(ConnectionError("offline")))
         self.assertTrue(launch.is_internet_related_error(subprocess.CalledProcessError(1, ["x"], output="", stderr="timeout")))
+        self.assertFalse(
+            launch.is_internet_related_error(
+                subprocess.CalledProcessError(
+                    1,
+                    ["pip"],
+                    output="",
+                    stderr="ERROR: Could not install packages due to an OSError: [Errno 13] Permission denied",
+                )
+            )
+        )
         self.assertFalse(launch.is_internet_related_error(RuntimeError("other")))
 
         attempts = {"count": 0}
@@ -118,6 +171,16 @@ class RuntimeAndLaunchTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 launch.retry_on_internet_failure("step", lambda: (_ for _ in ()).throw(TimeoutError("timeout")))
 
+        permission_attempts = {"count": 0}
+
+        def permission_failure():
+            permission_attempts["count"] += 1
+            raise OSError(13, "Permission denied")
+
+        with self.assertRaises(OSError):
+            launch.retry_on_internet_failure("step", permission_failure)
+        self.assertEqual(permission_attempts["count"], 1)
+
         with patch("scripts.launch.retry_on_internet_failure") as retry:
             launch.install_requirements()
             self.assertEqual(retry.call_count, 2)
@@ -126,10 +189,8 @@ class RuntimeAndLaunchTests(unittest.TestCase):
             self.assertTrue(launch.dependencies_look_installed())
         with patch("scripts.launch.importlib.metadata.version", side_effect=launch.importlib.metadata.PackageNotFoundError):
             self.assertFalse(launch.dependencies_look_installed())
-        self.assertEqual(
-            launch.package_version("beautifulsoup4"),
-            launch.importlib.metadata.version("beautifulsoup4"),
-        )
+        with patch("scripts.launch.importlib.metadata.version", return_value="4.14.3"):
+            self.assertEqual(launch.package_version("beautifulsoup4"), "4.14.3")
 
         self.assertTrue(launch.needs_playwright_install({}, "1.0"))
         self.assertTrue(launch.needs_playwright_install({"playwright_version": "0.9"}, "1.0"))
@@ -251,6 +312,8 @@ class RuntimeAndLaunchTests(unittest.TestCase):
                 launch, "STATE_FILE", state_file
             ), patch.object(launch, "PLAYWRIGHT_BROWSERS_DIR", playwright_dir), patch.object(
                 launch, "package_version", return_value="1.0"
+            ), patch.object(
+                launch, "dependencies_look_installed", return_value=True
             ), patch.object(launch, "ensure_local_pandoc", return_value=None), patch.object(
                 launch, "launch_app", return_value=0
             ) as launch_app_mock:
