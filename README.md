@@ -20,9 +20,7 @@ PyRefMan supports a simple workflow:
 
 ### Option 2: Clone with Git
 ```
-
-git clone <repository-url>
-
+git clone https://github.com/aaltulea/pyrefman.git
 ````
 
 ### Run the application
