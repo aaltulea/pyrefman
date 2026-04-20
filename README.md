@@ -6,7 +6,7 @@ PyRefMan is a Python-based reference manager that automates bibliography handlin
 
 PyRefMan supports a simple workflow:
 
-- Paste text containing bracketed URLs (e.g., `[url]`, `[url1, url2]`, or `[url1] [url2]`)
+- Paste text containing bracketed URLs (e.g., `[url]` OR `[url1, url2]` OR `[url1] [url2]`)
 - Run the app
 - Let PyRefMan collect reference metadata
 - Receive formatted citations and a generated bibliography
