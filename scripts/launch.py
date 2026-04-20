@@ -42,9 +42,7 @@ INTERNET_ERROR_PATTERNS = (
     "read timed out",
     "connect eacces",
     "errno -4092",
-    "errno 13",
     "winerror 10013",
-    "forbidden by its access permissions",
     "failed to download",
     "max retries exceeded",
     "proxyerror",
@@ -115,6 +113,24 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def write_stream_text(text: str, stream) -> None:
+    if not text:
+        return
+
+    payload = text if text.endswith(("\n", "\r")) else f"{text}\n"
+    try:
+        stream.write(payload)
+    except UnicodeEncodeError:
+        encoding = getattr(stream, "encoding", None) or "utf-8"
+        encoded = payload.encode(encoding, errors="replace")
+        buffer = getattr(stream, "buffer", None)
+        if buffer is not None:
+            buffer.write(encoded)
+        else:
+            stream.write(encoded.decode(encoding, errors="replace"))
+    stream.flush()
+
+
 def run_command(args: list[str], env: dict[str, str] | None = None) -> None:
     print(">", " ".join(args))
     result = subprocess.run(
@@ -128,9 +144,9 @@ def run_command(args: list[str], env: dict[str, str] | None = None) -> None:
         errors="replace",
     )
     if result.stdout:
-        print(result.stdout, end="" if result.stdout.endswith(("\n", "\r")) else "\n")
+        write_stream_text(result.stdout, sys.stdout)
     if result.stderr:
-        print(result.stderr, end="" if result.stderr.endswith(("\n", "\r")) else "\n", file=sys.stderr)
+        write_stream_text(result.stderr, sys.stderr)
     if result.returncode != 0:
         raise subprocess.CalledProcessError(result.returncode, args, output=result.stdout, stderr=result.stderr)
 
