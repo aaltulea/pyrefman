@@ -2,7 +2,8 @@
 
 PyRefMan is a Python-based reference manager that automates bibliography handling. Paste supported source URLs into your text, and PyRefMan will fetch metadata, format inline citations, and generate a reference list.
 
-<img width="2213" height="1787" alt="{F4F973ED-3D48-40E7-8785-8B54A36EB8C5}" src="https://github.com/user-attachments/assets/34d6e2f2-6322-4a2f-9f95-e82308fac675" />
+<img height="500px" alt="image" src="https://github.com/user-attachments/assets/541b7927-a4fd-49ea-ad8c-2f87434aa404" />
+
 
 ## Overview
 
