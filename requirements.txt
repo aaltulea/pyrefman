@@ -1,0 +1,5 @@
+# Pandoc is bootstrapped locally by the launch scripts and the app can fall back to a system pandoc.
+beautifulsoup4
+playwright
+requests
+wxPython
