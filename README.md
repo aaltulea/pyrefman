@@ -65,6 +65,15 @@ or:
 [https://pubmed.ncbi.nlm.nih.gov/11111111/, https://pubmed.ncbi.nlm.nih.gov/22222222/]
 ```
 
+<details>
+  <summary>Example input text</summary>
+
+  Cellular senescence is a stress-induced state of stable cell cycle arrest triggered by factors such as DNA damage, telomere attrition, and oncogenic signaling, in which cells remain metabolically active and undergo functional changes that contribute to deleterious effects, with the arrest primarily mediated by tumor suppressor pathways including p53/p21 and p16 [[https://pubmed.ncbi.nlm.nih.gov/33855023/](https://pubmed.ncbi.nlm.nih.gov/33855023/)] [[https://pubmed.ncbi.nlm.nih.gov/20078217/](https://pubmed.ncbi.nlm.nih.gov/20078217/)] [[https://pubmed.ncbi.nlm.nih.gov/34663974/](https://pubmed.ncbi.nlm.nih.gov/34663974/)].
+
+
+</details>
+
+
 ### Supported Sources
 
 * PubMed
