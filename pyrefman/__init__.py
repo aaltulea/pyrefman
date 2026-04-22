@@ -91,7 +91,7 @@ def build_reference_summary(formatted_references) -> dict:
             {"label": label, "count": count}
             for label, count in ranked
             if count > 1
-        ][:3]
+        ]
 
     return {
         "total_unique_references": len(unique_rows),
