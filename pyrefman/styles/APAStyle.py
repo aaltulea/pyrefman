@@ -157,7 +157,7 @@ class APAStyle(ReferencesStyle):
     def format_reference(self, inline_reference: InlineReference) -> FormattedReference:
         full = self.get_full_reference(inline_reference)
         inline_ref = self.get_inline_reference(inline_reference)
-        return FormattedReference(_inline=inline_ref, _full=full)
+        return FormattedReference(_inline=inline_ref, _full=f"* {full}")
 
     # ------------------------------------------------------------------
     # Author formatting helpers
