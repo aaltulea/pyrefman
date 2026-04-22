@@ -249,7 +249,7 @@ class BranchCoverageCoreTests(unittest.TestCase):
         self.assertEqual(apa.get_full_reference(minimal), "(n.d.).")
         self.assertEqual(apa._build_journal_block(make_inline_reference(journal="", volume="9", issue="", pages="")), "9.")
         self.assertEqual(apa._build_journal_block(make_inline_reference(journal="", volume="", issue="", pages="14-18")), "14-18.")
-        self.assertEqual(apa.format_reference(minimal).full, "(n.d.).")
+        self.assertEqual(apa.format_reference(minimal).full, "* (n.d.).")
         self.assertEqual(apa._format_apa_authors([]), "")
         self.assertEqual(apa._to_apa_author_name(""), "")
         self.assertEqual(apa._to_apa_author_name("Single"), "Single")
