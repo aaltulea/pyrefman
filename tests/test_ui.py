@@ -73,6 +73,30 @@ class FakeProcess:
         self.killed = True
 
 
+class MouseWheelEvent:
+    def __init__(self, *, control_down: bool, rotation: int, event_object=None, delta: int = 120) -> None:
+        self._control_down = control_down
+        self._rotation = rotation
+        self._event_object = event_object
+        self._delta = delta
+        self.skipped = False
+
+    def ControlDown(self) -> bool:
+        return self._control_down
+
+    def GetWheelRotation(self) -> int:
+        return self._rotation
+
+    def GetWheelDelta(self) -> int:
+        return self._delta
+
+    def GetEventObject(self):
+        return self._event_object
+
+    def Skip(self) -> None:
+        self.skipped = True
+
+
 @contextmanager
 def build_frame(*, state=None, pandoc_available=True):
     with workspace_dir() as tmp_path:
@@ -168,6 +192,8 @@ class UITests(unittest.TestCase):
             self.assertTrue(frame._is_standard_google_doc_url("https://docs.google.com/document/d/abc/edit"))
             self.assertFalse(frame._is_standard_google_doc_url("https://example.com"))
             self.assertTrue(frame._example_native_path())
+            self.assertEqual(frame._normalize_status_text("first line\nsecond line"), "first line. second line")
+            self.assertTrue(frame.status_label.GetWindowStyleFlag() & getattr(ui.wx, "ST_ELLIPSIZE_END", 0))
 
             with patch.object(ui.wx.SystemSettings, "GetAppearance", return_value=DummyAppearance(dark=True)):
                 self.assertTrue(frame._get_system_appearance().IsDark())
@@ -188,6 +214,28 @@ class UITests(unittest.TestCase):
             focus_event = DummyEvent()
             frame._on_summary_focus(focus_event)
             self.assertTrue(focus_event.skipped)
+
+            initial_preview_font_size = frame.preview_ctrl.GetFont().GetPointSize()
+            initial_input_font_size = frame.input_file_ctrl.GetFont().GetPointSize()
+            self.assertIn(frame.preview_ctrl, frame._zoomable_text_controls)
+            self.assertNotIn(frame.input_file_ctrl, frame._zoomable_text_controls)
+            frame._adjust_preview_text_zoom(2)
+            self.assertEqual(frame.preview_ctrl.GetFont().GetPointSize(), min(initial_preview_font_size + 2, ui.PREVIEW_MAX_FONT_SIZE))
+            self.assertEqual(frame.input_file_ctrl.GetFont().GetPointSize(), initial_input_font_size)
+            no_ctrl_event = MouseWheelEvent(control_down=False, rotation=120, event_object=frame.preview_ctrl)
+            with patch.object(frame, "FindFocus", return_value=frame.preview_ctrl):
+                frame._on_text_ctrl_mousewheel(no_ctrl_event)
+            self.assertTrue(no_ctrl_event.skipped)
+            ctrl_event = MouseWheelEvent(control_down=True, rotation=-120, event_object=frame.preview_ctrl)
+            with patch.object(frame, "FindFocus", return_value=frame.preview_ctrl):
+                frame._on_text_ctrl_mousewheel(ctrl_event)
+            self.assertEqual(frame.preview_ctrl.GetFont().GetPointSize(), max(initial_preview_font_size + 1, ui.PREVIEW_MIN_FONT_SIZE))
+            self.assertEqual(frame.input_file_ctrl.GetFont().GetPointSize(), initial_input_font_size)
+            path_event = MouseWheelEvent(control_down=True, rotation=120, event_object=frame.input_file_ctrl)
+            with patch.object(frame, "FindFocus", return_value=frame.input_file_ctrl):
+                frame._on_text_ctrl_mousewheel(path_event)
+            self.assertTrue(path_event.skipped)
+            self.assertEqual(frame.input_file_ctrl.GetFont().GetPointSize(), initial_input_font_size)
 
             frame.citations_dir_ctrl.SetValue(str(tmp_path / "citations"))
             frame._save_state()
@@ -393,6 +441,7 @@ class UITests(unittest.TestCase):
             self.assertIsNone(frame._completion_open_target({}))
             frame._show_completion_dialog({"success": True, "output_file": str(output_file)})
             self.assertIsNotNone(frame._completion_frame)
+            self.assertTrue(frame.IsEnabled())
             self.assertIn("Total unique references", frame._format_reference_summary({"total_unique_references": 1}))
             self.assertIn("No references", frame._format_reference_summary({}))
 
@@ -483,7 +532,11 @@ class UITests(unittest.TestCase):
             with patch.object(frame, "_collect_arguments", side_effect=ValueError("bad args")), patch.object(
                 ui.wx, "MessageBox", return_value=ui.wx.OK
             ) as message_box:
+                completion = MagicMock()
+                completion.IsBeingDeleted.return_value = False
+                frame._completion_frame = completion
                 frame._start_processing()
+                completion.Close.assert_called_once()
                 message_box.assert_called()
 
             frame._worker_process = None
