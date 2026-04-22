@@ -135,12 +135,36 @@ class ProcessingTests(unittest.TestCase):
 
         ref1 = make_inline_reference(dp="2019 Jan", journal="Journal A", authors=["Doe, Jane A", "Smith, John B"])
         ref2 = make_inline_reference(dp="2024 Mar", journal="Journal A", authors=["Doe, Jane A"], doi="10.1000/2", pmid="2")
-        summary = pyrefman.build_reference_summary([make_formatted_reference(ref1), make_formatted_reference(ref2)])
-        self.assertEqual(summary["total_unique_references"], 2)
-        self.assertEqual(summary["oldest_year"], 2019)
-        self.assertEqual(summary["newest_year"], 2024)
+        ref3 = make_inline_reference(dp="2022 Feb", journal="Journal B", authors=["Roe, Jane B", "Smith, John B"], doi="10.1000/3", pmid="3")
+        ref4 = make_inline_reference(dp="2020 Jul", journal="Journal B", authors=["Roe, Jane B"], doi="10.1000/4", pmid="4")
+        ref5 = make_inline_reference(dp="2021 Aug", journal="Journal C", authors=["Poe, Jane C", "Lane, Alex Q"], doi="10.1000/5", pmid="5")
+        ref6 = make_inline_reference(dp="2023 Sep", journal="Journal C", authors=["Poe, Jane C"], doi="10.1000/6", pmid="6")
+        ref7 = make_inline_reference(dp="2018 Nov", journal="Journal D", authors=["Moe, Jane D", "Solo, Single A"], doi="10.1000/7", pmid="7")
+        ref8 = make_inline_reference(dp="2025 Jan", journal="Journal D", authors=["Moe, Jane D"], doi="10.1000/8", pmid="8")
+        summary = pyrefman.build_reference_summary(
+            [
+                make_formatted_reference(ref1),
+                make_formatted_reference(ref2),
+                make_formatted_reference(ref3),
+                make_formatted_reference(ref4),
+                make_formatted_reference(ref5),
+                make_formatted_reference(ref6),
+                make_formatted_reference(ref7),
+                make_formatted_reference(ref8),
+            ]
+        )
+        self.assertEqual(summary["total_unique_references"], 8)
+        self.assertEqual(summary["oldest_year"], 2018)
+        self.assertEqual(summary["newest_year"], 2025)
         self.assertEqual(summary["top_journals"][0]["label"], "Journal A")
         self.assertEqual(summary["top_authors"][0]["label"], "Doe JA")
+        self.assertEqual([item["label"] for item in summary["top_journals"]], ["Journal A", "Journal B", "Journal C", "Journal D"])
+        self.assertEqual(
+            [item["label"] for item in summary["top_authors"]],
+            ["Doe JA", "Moe JD", "Poe JC", "Roe JB", "Smith JB"],
+        )
+        self.assertNotIn("Lane AQ", [item["label"] for item in summary["top_authors"]])
+        self.assertNotIn("Solo SA", [item["label"] for item in summary["top_authors"]])
         self.assertEqual(pyrefman._extract_publication_year(make_inline_reference(dp="not a year")), None)
 
     def test_process_file_citations_success_and_errors(self) -> None:
