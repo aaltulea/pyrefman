@@ -171,6 +171,10 @@ class UtilsTests(unittest.TestCase):
         with workspace_dir() as tmp_path:
             output_md = tmp_path / "out.md"
             self.assertEqual(utils.get_output_file_path(tmp_path / "demo.txt"), tmp_path / "demo_formatted.md")
+            self.assertEqual(
+                utils.body_text_before_reference_section("Intro\n\n# References\n\nhttps://doi.example/item"),
+                "Intro",
+            )
 
             with patch("builtins.print") as mocked_print:
                 utils.write_output_file("hello", output_md)
@@ -193,3 +197,12 @@ class UtilsTests(unittest.TestCase):
                 self.assertIn("missing", printed.lower())
                 self.assertIn("not handled", printed.lower())
                 self.assertIn("loose", printed.lower())
+
+            with patch("builtins.print") as mocked_print:
+                utils.warn_about_missing_citations(
+                    "Body text\n\n# References\n\nhttps://doi.example/item",
+                    [],
+                    [],
+                )
+                printed = "\n".join(str(call.args[0]) for call in mocked_print.call_args_list if call.args)
+                self.assertNotIn("loose", printed.lower())
