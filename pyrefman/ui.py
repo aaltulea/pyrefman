@@ -64,6 +64,8 @@ OUTPUT_FORMAT_ALLOWED_SUFFIXES = {
     "markdown": {".md", ".markdown"},
     "docx": {".docx"},
 }
+PREVIEW_MIN_FONT_SIZE = 8
+PREVIEW_MAX_FONT_SIZE = 32
 
 
 def discover_reference_styles() -> tuple[str, ...]:
@@ -161,6 +163,7 @@ class CompletionFrame(wx.Frame):
                 size=(-1, 180),
             )
             self._owner._apply_system_text_colours(error_box)
+            self._owner._register_text_control(error_box, include_in_appearance=False, zoomable=True)
             root.Add(error_box, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 16)
 
             error_hint = wx.StaticText(panel, label="The Status Log tab contains the full processing output.")
@@ -204,6 +207,7 @@ class CompletionFrame(wx.Frame):
         path_ctrl = wx.TextCtrl(parent, value=str(path), style=wx.TE_READONLY | wx.TE_NOHIDESEL)
         path_ctrl.SetMinSize((460, -1))
         self._owner._apply_system_text_colours(path_ctrl)
+        self._owner._register_text_control(path_ctrl, include_in_appearance=False)
         row.Add(path_ctrl, 0, wx.EXPAND)
         sizer.Add(row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 16)
 
@@ -258,7 +262,8 @@ class CompletionFrame(wx.Frame):
         try:
             if self._owner and not self._owner.IsBeingDeleted():
                 self._owner.Enable(True)
-                self._owner._completion_frame = None
+                if getattr(self._owner, "_completion_frame", None) is self:
+                    self._owner._completion_frame = None
                 self._owner.Raise()
         except RuntimeError:
             pass
@@ -308,6 +313,7 @@ class PyRefmanFrame(wx.Frame):
         self._input_mode_buttons: dict[str, wx.RadioButton] = {}
         self._mapping_checkboxes: dict[str, wx.CheckBox] = {}
         self._appearance_sensitive_controls: list[wx.TextCtrl] = []
+        self._zoomable_text_controls: list[wx.TextCtrl] = []
         self._completion_frame: CompletionFrame | None = None
 
         self._downloads_dir = downloads_dir
@@ -372,7 +378,10 @@ class PyRefmanFrame(wx.Frame):
         status_panel = wx.Panel(root_panel)
         self.status_panel = status_panel
         status_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        self.status_label = self._make_wrapped_label(status_panel, self._idle_status_text())
+        status_style = getattr(wx, "ST_ELLIPSIZE_END", 0) | getattr(wx, "ST_NO_AUTORESIZE", 0)
+        self.status_label = wx.StaticText(status_panel, label=self._idle_status_text(), style=status_style)
+        self.status_label.SetMinSize((1, -1))
+        self.status_label.SetToolTip(self._idle_status_text())
         self.run_state_label = wx.StaticText(status_panel, label="Idle")
         self.progress_gauge = wx.Gauge(status_panel, range=100, size=(180, -1))
         status_sizer.Add(self.status_label, 1, wx.EXPAND | wx.ALL, 10)
@@ -410,7 +419,7 @@ class PyRefmanFrame(wx.Frame):
         self.input_file_ctrl = wx.TextCtrl(self.file_input_panel)
         self.input_file_ctrl.SetMinSize((1, -1))
         self.input_file_ctrl.SetHint("Choose a local document")
-        self._appearance_sensitive_controls.append(self.input_file_ctrl)
+        self._register_text_control(self.input_file_ctrl)
         self.input_file_button = wx.Button(self.file_input_panel, label="Browse...")
         file_row.Add(self.input_file_button, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         file_row.Add(self.input_file_ctrl, 1, wx.EXPAND)
@@ -429,7 +438,7 @@ class PyRefmanFrame(wx.Frame):
         url_sizer = wx.BoxSizer(wx.VERTICAL)
         self.google_doc_ctrl = wx.TextCtrl(self.url_input_panel)
         self.google_doc_ctrl.SetHint("https://docs.google.com/document/d/<id>/edit")
-        self._appearance_sensitive_controls.append(self.google_doc_ctrl)
+        self._register_text_control(self.google_doc_ctrl)
         url_sizer.Add(self.google_doc_ctrl, 0, wx.EXPAND)
         self.google_doc_hint = self._make_wrapped_label(
             self.url_input_panel,
@@ -454,7 +463,7 @@ class PyRefmanFrame(wx.Frame):
             style=wx.TE_MULTILINE,
             size=(-1, 180),
         )
-        self._appearance_sensitive_controls.append(self.raw_text_ctrl)
+        self._register_text_control(self.raw_text_ctrl, zoomable=True)
         text_sizer.Add(self.raw_text_ctrl, 1, wx.EXPAND)
         self.raw_text_hint = self._make_wrapped_label(
             self.text_input_panel,
@@ -488,7 +497,7 @@ class PyRefmanFrame(wx.Frame):
         output_row = wx.BoxSizer(wx.HORIZONTAL)
         self.output_file_ctrl = wx.TextCtrl(parent)
         self.output_file_ctrl.SetMinSize((1, -1))
-        self._appearance_sensitive_controls.append(self.output_file_ctrl)
+        self._register_text_control(self.output_file_ctrl)
         self.output_file_button = wx.Button(parent, label="Save As...")
         output_row.Add(self.output_file_button, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         output_row.Add(self.output_file_ctrl, 1, wx.EXPAND)
@@ -500,7 +509,7 @@ class PyRefmanFrame(wx.Frame):
         citations_row = wx.BoxSizer(wx.HORIZONTAL)
         self.citations_dir_ctrl = wx.TextCtrl(parent)
         self.citations_dir_ctrl.SetMinSize((1, -1))
-        self._appearance_sensitive_controls.append(self.citations_dir_ctrl)
+        self._register_text_control(self.citations_dir_ctrl)
         self.citations_dir_button = wx.Button(parent, label="Browse...")
         citations_row.Add(self.citations_dir_button, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         citations_row.Add(self.citations_dir_ctrl, 1, wx.EXPAND)
@@ -560,7 +569,7 @@ class PyRefmanFrame(wx.Frame):
             style=wx.TE_MULTILINE | wx.TE_READONLY,
             size=(-1, 180),
         )
-        self._appearance_sensitive_controls.append(self.style_preview_ctrl)
+        self._register_text_control(self.style_preview_ctrl, zoomable=True)
         sizer.Add(self.style_preview_ctrl, 0, wx.EXPAND | wx.ALL, 10)
 
         return sizer
@@ -590,7 +599,7 @@ class PyRefmanFrame(wx.Frame):
             style=wx.TE_MULTILINE | wx.TE_READONLY,
             size=(-1, 280),
         )
-        self._appearance_sensitive_controls.append(self.log_ctrl)
+        self._register_text_control(self.log_ctrl, zoomable=True)
         log_sizer.Add(self.log_ctrl, 1, wx.EXPAND | wx.ALL, 8)
         log_panel.SetSizer(log_sizer)
         self.results_notebook.AddPage(log_panel, "Status Log")
@@ -602,7 +611,7 @@ class PyRefmanFrame(wx.Frame):
             style=wx.TE_MULTILINE | wx.TE_READONLY,
             size=(-1, 280),
         )
-        self._appearance_sensitive_controls.append(self.preview_ctrl)
+        self._register_text_control(self.preview_ctrl, zoomable=True)
         preview_sizer.Add(self.preview_ctrl, 1, wx.EXPAND | wx.ALL, 8)
         preview_panel.SetSizer(preview_sizer)
         self.results_notebook.AddPage(preview_panel, "Markdown Preview")
@@ -614,7 +623,7 @@ class PyRefmanFrame(wx.Frame):
             style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_NOHIDESEL,
             size=(-1, 280),
         )
-        self._appearance_sensitive_controls.append(self.summary_ctrl)
+        self._register_text_control(self.summary_ctrl, zoomable=True)
         self.summary_ctrl.Bind(wx.EVT_SET_FOCUS, self._on_summary_focus)
         summary_sizer.Add(self.summary_ctrl, 1, wx.EXPAND | wx.ALL, 8)
         summary_panel.SetSizer(summary_sizer)
@@ -707,11 +716,94 @@ class PyRefmanFrame(wx.Frame):
     def _idle_status_text() -> str:
         return f"PyRefman version {PYREFMAN_VERSION}"
 
+    @staticmethod
+    def _normalize_status_text(text: str) -> str:
+        segments = [
+            re.sub(r"\s+", " ", segment).strip()
+            for segment in str(text or "").splitlines()
+            if segment and segment.strip()
+        ]
+        if not segments:
+            return ""
+
+        normalized = segments[0]
+        for segment in segments[1:]:
+            if normalized and normalized[-1] not in ".!?;:":
+                normalized += "."
+            normalized += f" {segment}"
+        return normalized.strip()
+
     def _set_status_text(self, text: str) -> None:
-        normalized_text = re.sub(r"\s+", " ", str(text or "").strip())
-        self.status_label._wrap_source_text = normalized_text
+        normalized_text = self._normalize_status_text(text)
         self.status_label.SetLabel(normalized_text)
-        self._rewrap_labels()
+        self.status_label.SetToolTip(normalized_text)
+        self.status_panel.Layout()
+        if hasattr(self, "root_panel"):
+            self.root_panel.Layout()
+        self.Layout()
+
+    def _register_text_control(
+        self,
+        control: wx.TextCtrl,
+        include_in_appearance: bool = True,
+        zoomable: bool = False,
+    ) -> wx.TextCtrl:
+        if include_in_appearance:
+            self._appearance_sensitive_controls.append(control)
+        if zoomable and control not in self._zoomable_text_controls:
+            self._zoomable_text_controls.append(control)
+            control._pyrefman_base_point_size = max(control.GetFont().GetPointSize(), PREVIEW_MIN_FONT_SIZE)
+            control._pyrefman_zoom_delta = 0
+            control.Bind(wx.EVT_MOUSEWHEEL, self._on_text_ctrl_mousewheel)
+            self._apply_text_ctrl_zoom(control)
+        return control
+
+    def _valid_zoomable_text_controls(self) -> list[wx.TextCtrl]:
+        valid_controls: list[wx.TextCtrl] = []
+        for control in self._zoomable_text_controls:
+            try:
+                if control and not control.IsBeingDeleted():
+                    valid_controls.append(control)
+            except RuntimeError:
+                continue
+        self._zoomable_text_controls = valid_controls
+        return valid_controls
+
+    @staticmethod
+    def _text_ctrl_zoom_delta_limits(control: wx.TextCtrl) -> tuple[int, int]:
+        base_point_size = int(getattr(control, "_pyrefman_base_point_size", control.GetFont().GetPointSize()))
+        min_delta = PREVIEW_MIN_FONT_SIZE - base_point_size
+        max_delta = PREVIEW_MAX_FONT_SIZE - base_point_size
+        return min_delta, max_delta
+
+    def _clamp_text_ctrl_zoom_delta(self, control: wx.TextCtrl, delta: int) -> int:
+        min_delta, max_delta = self._text_ctrl_zoom_delta_limits(control)
+        return max(min_delta, min(max_delta, int(delta)))
+
+    def _apply_text_ctrl_zoom(self, control: wx.TextCtrl) -> None:
+        try:
+            if not control or control.IsBeingDeleted():
+                return
+            zoom_delta = self._clamp_text_ctrl_zoom_delta(control, getattr(control, "_pyrefman_zoom_delta", 0))
+            control._pyrefman_zoom_delta = zoom_delta
+            base_point_size = int(getattr(control, "_pyrefman_base_point_size", control.GetFont().GetPointSize()))
+            point_size = max(PREVIEW_MIN_FONT_SIZE, min(PREVIEW_MAX_FONT_SIZE, base_point_size + zoom_delta))
+            font = control.GetFont()
+            font.SetPointSize(point_size)
+            control.SetFont(font)
+            control.Refresh()
+        except RuntimeError:
+            return
+
+    def _set_text_ctrl_zoom_delta(self, control: wx.TextCtrl, delta: int) -> None:
+        control._pyrefman_zoom_delta = self._clamp_text_ctrl_zoom_delta(control, delta)
+        self._apply_text_ctrl_zoom(control)
+
+    def _adjust_text_ctrl_zoom(self, control: wx.TextCtrl, steps: int) -> None:
+        if not steps:
+            return
+        current_delta = int(getattr(control, "_pyrefman_zoom_delta", 0))
+        self._set_text_ctrl_zoom_delta(control, current_delta + int(steps))
 
     @staticmethod
     def _hide_text_caret(control: wx.TextCtrl) -> None:
@@ -840,6 +932,43 @@ class PyRefmanFrame(wx.Frame):
     def _on_summary_focus(self, event: wx.FocusEvent) -> None:
         self._hide_text_caret(self.summary_ctrl)
         event.Skip()
+
+    def _set_preview_font_size(self, point_size: int) -> None:
+        base_point_size = int(getattr(self.preview_ctrl, "_pyrefman_base_point_size", self.preview_ctrl.GetFont().GetPointSize()))
+        clamped_size = max(PREVIEW_MIN_FONT_SIZE, min(PREVIEW_MAX_FONT_SIZE, int(point_size)))
+        self._set_text_ctrl_zoom_delta(self.preview_ctrl, clamped_size - base_point_size)
+
+    def _adjust_preview_text_zoom(self, steps: int) -> None:
+        self._adjust_text_ctrl_zoom(self.preview_ctrl, steps)
+
+    def _on_text_ctrl_mousewheel(self, event: wx.MouseEvent) -> None:
+        if not event.ControlDown():
+            event.Skip()
+            return
+
+        get_event_object = getattr(event, "GetEventObject", None)
+        control = get_event_object() if callable(get_event_object) else None
+        if control not in self._valid_zoomable_text_controls():
+            event.Skip()
+            return
+
+        focused_control = self.FindFocus()
+        if focused_control is not control:
+            event.Skip()
+            return
+
+        wheel_delta = event.GetWheelDelta() or 120
+        rotation = event.GetWheelRotation()
+        if rotation == 0:
+            return
+
+        steps = int(rotation / wheel_delta)
+        if steps == 0:
+            steps = 1 if rotation > 0 else -1
+        self._adjust_text_ctrl_zoom(control, steps)
+
+    def _on_preview_mousewheel(self, event: wx.MouseEvent) -> None:
+        self._on_text_ctrl_mousewheel(event)
 
     def _on_run_button(self, _event: wx.CommandEvent | None = None) -> None:
         if self._running:
@@ -1440,6 +1569,17 @@ class PyRefmanFrame(wx.Frame):
     def _replace_text(widget: wx.TextCtrl, text: str) -> None:
         widget.SetValue(text or "")
 
+    def _dismiss_completion_dialog(self) -> None:
+        completion = self._completion_frame
+        if completion is None:
+            return
+        self._completion_frame = None
+        try:
+            if not completion.IsBeingDeleted():
+                completion.Close()
+        except RuntimeError:
+            pass
+
     def _selected_mapping_column_keys(self) -> list[str]:
         return [
             option.key
@@ -1537,6 +1677,8 @@ class PyRefmanFrame(wx.Frame):
         if self._worker_process is not None:
             wx.MessageBox("PyRefman is already running.", "PyRefman", wx.OK | wx.ICON_INFORMATION, parent=self)
             return
+
+        self._dismiss_completion_dialog()
 
         try:
             args = self._collect_arguments()
@@ -1783,10 +1925,8 @@ class PyRefmanFrame(wx.Frame):
         if self._closing:
             return
 
-        if self._completion_frame is not None and not self._completion_frame.IsBeingDeleted():
-            self._completion_frame.Close()
+        self._dismiss_completion_dialog()
 
-        self.Enable(False)
         self._completion_frame = CompletionFrame(self, payload)
         self._completion_frame.Show()
         self._completion_frame.Raise()
