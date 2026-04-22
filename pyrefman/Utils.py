@@ -18,6 +18,7 @@ _url_re = re.compile(r"https?://[^\s\]\)\>]+", re.IGNORECASE)
 _markdown_link_re = re.compile(r"\[[^\]]+]\((https?://[^)\s]+)\)", re.IGNORECASE)
 _bracket_url_re = re.compile(r"\[(https?://[^\]\s]+)\]", re.IGNORECASE)
 _bare_url_re = re.compile(r"https?://[^\s<>\"]+", re.IGNORECASE)
+_reference_heading_re = re.compile(r"(?im)^\s{0,3}#{1,6}\s+references?\s*$")
 TANDEM_REGEX = r"[\s;,]+"
 OUTPUT_FORMAT_EXTENSIONS = {
     "markdown": ".md",
@@ -363,6 +364,14 @@ def write_markdown_to_file(markdown_text_processed: str, output_path: Path) -> N
     write_output_file(markdown_text_processed, output_path)
 
 
+def body_text_before_reference_section(markdown_text: str) -> str:
+    text = str(markdown_text or "")
+    match = _reference_heading_re.search(text)
+    if not match:
+        return text
+    return text[:match.start()].rstrip()
+
+
 def warn_about_missing_citations(output_md_text, rejected_urls: List[str],
                                  inline_references: list["InlineReference"]) -> None:
     missing_citations = [x.url for x in inline_references if not x.nbib_path]
@@ -379,7 +388,7 @@ def warn_about_missing_citations(output_md_text, rejected_urls: List[str],
         )
         print([extract_markdown_url(x) for x in rejected_urls])
 
-    loose_urls = re.findall(r'https?://[^\s"\'<>\]]+', output_md_text)
+    loose_urls = re.findall(r'https?://[^\s"\'<>\]]+', body_text_before_reference_section(output_md_text))
     loose_urls_count = len(loose_urls)
 
     if loose_urls_count > 0:
