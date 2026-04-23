@@ -6,6 +6,7 @@ import subprocess
 import locale
 from pathlib import Path
 from typing import Optional, List
+from urllib.parse import unquote, urlparse
 
 from pyrefman.runtime import (
     MARKDOWN_INPUT_SUFFIXES,
@@ -220,10 +221,300 @@ def safe_filename(name: str, replacement: str = "_") -> str:
     return safe_name
 
 
+def normalize_doi_query(value: str) -> str:
+    cleaned = strip_wrapping_quotes(str(value or "")).strip()
+    if not cleaned:
+        return ""
+
+    parsed = urlparse(cleaned)
+    if parsed.scheme and parsed.netloc:
+        host = parsed.netloc.strip().lower()
+        host = re.sub(r"^dx\.", "", host)
+        path = unquote(parsed.path or "").strip()
+        normalized = f"{host}{path}"
+    else:
+        normalized = cleaned
+
+    normalized = normalized.split("?", 1)[0].split("#", 1)[0].strip()
+    normalized = re.sub(r"^https?://", "", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"^dx\.doi\.org/", "doi.org/", normalized, flags=re.IGNORECASE)
+    normalized = normalized.rstrip("/")
+    return normalized
+
+
+def sanitize_doi_filename(value: str) -> str:
+    return safe_filename(normalize_doi_query(value))
+
+
+def extract_doi_from_query(value: str) -> str:
+    normalized = normalize_doi_query(value)
+    if normalized.lower().startswith("doi.org/"):
+        return normalized.split("/", 1)[1].strip()
+    return normalized
+
+
+def _is_balanced_bibtex_braces(text: str) -> bool:
+    depth = 0
+    for index, char in enumerate(text):
+        if char == "{" and (index == 0 or text[index - 1] != "\\"):
+            depth += 1
+        elif char == "}" and (index == 0 or text[index - 1] != "\\"):
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0
+
+
+def _strip_outer_bibtex_wrappers(value: str) -> str:
+    output = str(value or "").strip()
+    while output:
+        if output[0] == output[-1] == '"' and len(output) >= 2:
+            output = output[1:-1].strip()
+            continue
+        if (
+            output[0] == "{"
+            and output[-1] == "}"
+            and len(output) >= 2
+            and _is_balanced_bibtex_braces(output)
+        ):
+            output = output[1:-1].strip()
+            continue
+        break
+    return output
+
+
+def _clean_bibtex_value(value: str) -> str:
+    output = _strip_outer_bibtex_wrappers(value)
+    output = unquote(output)
+    output = re.sub(r"\\([%&_#{}])", r"\1", output)
+    output = output.replace("~", " ")
+    output = output.replace("{", "").replace("}", "")
+    output = re.sub(r"\s+", " ", output).strip()
+    return output
+
+
+def _consume_bibtex_value(text: str, start_index: int) -> tuple[str, int]:
+    if start_index >= len(text):
+        return "", start_index
+
+    opener = text[start_index]
+    if opener == "{":
+        depth = 0
+        for index in range(start_index, len(text)):
+            char = text[index]
+            if char == "{" and (index == start_index or text[index - 1] != "\\"):
+                depth += 1
+            elif char == "}" and text[index - 1] != "\\":
+                depth -= 1
+                if depth == 0:
+                    return text[start_index:index + 1], index + 1
+        raise ValueError("Unbalanced BibTeX braces.")
+
+    if opener == '"':
+        escaped = False
+        for index in range(start_index + 1, len(text)):
+            char = text[index]
+            if char == '"' and not escaped:
+                return text[start_index:index + 1], index + 1
+            escaped = char == "\\" and not escaped
+            if char != "\\":
+                escaped = False
+        raise ValueError("Unbalanced BibTeX quotes.")
+
+    index = start_index
+    while index < len(text) and text[index] not in ",\r\n}":
+        index += 1
+    return text[start_index:index].strip(), index
+
+
+def _parse_bibtex_fields(bibtex_text: str) -> dict[str, str]:
+    text = str(bibtex_text or "").strip()
+    if not text.startswith("@"):
+        raise ValueError("BibTeX entry must start with '@'.")
+
+    entry_match = re.match(r"@\w+\s*\{\s*([^,]+)\s*,", text, flags=re.DOTALL)
+    if not entry_match:
+        raise ValueError("Could not parse BibTeX entry header.")
+
+    fields: dict[str, str] = {}
+    index = entry_match.end()
+
+    while index < len(text):
+        while index < len(text) and text[index] in " \t\r\n,":
+            index += 1
+        if index >= len(text) or text[index] == "}":
+            break
+
+        key_start = index
+        while index < len(text) and text[index] not in "=\r\n":
+            index += 1
+        key = text[key_start:index].strip().lower()
+        if not key:
+            break
+
+        while index < len(text) and text[index] in " \t\r\n":
+            index += 1
+        if index >= len(text) or text[index] != "=":
+            raise ValueError(f"Missing '=' for BibTeX field '{key}'.")
+        index += 1
+
+        while index < len(text) and text[index] in " \t\r\n":
+            index += 1
+        value, index = _consume_bibtex_value(text, index)
+        fields[key] = _clean_bibtex_value(value)
+
+        while index < len(text) and text[index] in " \t\r\n":
+            index += 1
+        if index < len(text) and text[index] == ",":
+            index += 1
+
+    return fields
+
+
+def _split_bibtex_authors(author_field: str) -> list[str]:
+    authors: list[str] = []
+    current: list[str] = []
+    depth = 0
+    text = str(author_field or "")
+    index = 0
+
+    while index < len(text):
+        char = text[index]
+        if char == "{" and (index == 0 or text[index - 1] != "\\"):
+            depth += 1
+        elif char == "}" and (index == 0 or text[index - 1] != "\\"):
+            depth = max(0, depth - 1)
+
+        if depth == 0 and text[index:index + 5].lower() == " and ":
+            author = "".join(current).strip()
+            if author:
+                authors.append(author)
+            current = []
+            index += 5
+            continue
+
+        current.append(char)
+        index += 1
+
+    author = "".join(current).strip()
+    if author:
+        authors.append(author)
+    return authors
+
+
+def _initials_from_given_names(given_names: str) -> str:
+    initials: list[str] = []
+    for token in re.split(r"[\s\-]+", str(given_names or "").strip()):
+        token = re.sub(r"[^A-Za-z0-9]", "", token)
+        if token:
+            initials.append(token[0])
+    return "".join(initials)
+
+
+def _format_bibtex_author(author_text: str) -> tuple[Optional[str], Optional[str]]:
+    raw = _clean_bibtex_value(author_text)
+    if not raw:
+        return None, None
+    if raw.lower() == "others":
+        return "et al", None
+
+    if "," in raw:
+        parts = [part.strip() for part in raw.split(",") if part.strip()]
+        family = parts[0] if parts else ""
+        given = " ".join(parts[1:]) if len(parts) > 1 else ""
+    else:
+        tokens = raw.split()
+        family = tokens[-1] if tokens else ""
+        given = " ".join(tokens[:-1]) if len(tokens) > 1 else ""
+
+    family = re.sub(r"\s+", " ", family).strip()
+    given = re.sub(r"\s+", " ", given).strip()
+    initials = _initials_from_given_names(given)
+
+    au = f"{family} {initials}".strip() if family else None
+    fau = f"{family}, {given}".strip(", ") if family else raw
+    return au, fau
+
+
+def _ensure_sentence_terminal_punctuation(value: str) -> str:
+    text = str(value or "").strip()
+    if text and text[-1] not in ".!?":
+        text += "."
+    return text
+
+
+def _extract_publication_year_from_bibtex(fields: dict[str, str]) -> str:
+    for key in ("year", "date"):
+        candidate = _clean_bibtex_value(fields.get(key, ""))
+        match = re.search(r"\b\d{4}\b", candidate)
+        if match:
+            return match.group(0)
+    return ""
+
+
+def format_nbib_line(tag: str, value: str = "") -> str:
+    return f"{tag:<4}- {value}".rstrip()
+
+
+def bibtex_to_nbib(bibtex_text: str, doi_url: Optional[str] = None) -> str:
+    fields = _parse_bibtex_fields(bibtex_text)
+    doi = _clean_bibtex_value(fields.get("doi", "")) or extract_doi_from_query(doi_url or "")
+    title = _ensure_sentence_terminal_punctuation(_clean_bibtex_value(fields.get("title", "")))
+    journal = _clean_bibtex_value(
+        fields.get("journal", "")
+        or fields.get("journaltitle", "")
+        or fields.get("booktitle", "")
+    )
+    volume = _clean_bibtex_value(fields.get("volume", ""))
+    issue = _clean_bibtex_value(fields.get("number", "") or fields.get("issue", ""))
+    pages = _clean_bibtex_value(fields.get("pages", "")).replace("--", "-")
+    publisher = _clean_bibtex_value(fields.get("publisher", ""))
+    year = _extract_publication_year_from_bibtex(fields)
+
+    au_values: list[str] = []
+    fau_values: list[str] = []
+    for author in _split_bibtex_authors(fields.get("author", "")):
+        au, fau = _format_bibtex_author(author)
+        if au:
+            au_values.append(au)
+        if fau:
+            fau_values.append(fau)
+
+    nbib_lines: list[str] = []
+    if title:
+        nbib_lines.append(format_nbib_line("TI", title))
+    for author in au_values:
+        nbib_lines.append(format_nbib_line("AU", author))
+    for author in fau_values:
+        nbib_lines.append(format_nbib_line("FAU", author))
+    if journal:
+        nbib_lines.append(format_nbib_line("JT", journal))
+    if volume:
+        nbib_lines.append(format_nbib_line("VL", volume))
+    if issue:
+        nbib_lines.append(format_nbib_line("IP", issue))
+    if pages:
+        nbib_lines.append(format_nbib_line("PG", pages))
+    if year:
+        nbib_lines.append(format_nbib_line("DP", year))
+    if publisher:
+        nbib_lines.append(format_nbib_line("PB", publisher))
+    if doi:
+        nbib_lines.append(format_nbib_line("AID", f"{doi} [doi]"))
+
+    return "\n".join(nbib_lines) + "\n"
+
+
 def grab_markdown_urls(text):
-    pattern = re.compile(r"\[[^]\[]+?]\([^)(]+?\)|\\\[[^\\\]\[]+?\\\]", flags=re.MULTILINE)
-    urls = pattern.findall(text)
-    urls = [u for u in urls if "http" in u]
+    pattern = re.compile(
+        r"\[[^]\[]+?]\([^)(]+?\)|\[(https?://[^\]\s]+)\]|\\\[[^\\\]\[]+?\\\]",
+        flags=re.MULTILINE | re.IGNORECASE,
+    )
+    urls = []
+    for match in pattern.finditer(text):
+        candidate = match.group(0)
+        if candidate and "http" in candidate.lower():
+            urls.append(candidate)
     urls = list(dict.fromkeys(urls))
     return urls
 
