@@ -104,7 +104,49 @@ class UtilsTests(unittest.TestCase):
         urls = utils.grab_markdown_urls(
             "[https://example.com] and [x](https://example.com/2)\n[https://example.com]"
         )
-        self.assertEqual(urls, ["[x](https://example.com/2)"])
+        self.assertEqual(urls, ["[https://example.com]", "[x](https://example.com/2)"])
+
+    def test_doi_helpers_and_bibtex_to_nbib(self) -> None:
+        self.assertEqual(
+            utils.normalize_doi_query("https://doi.org/10.1016/j.ebiom.2018.09.015"),
+            "doi.org/10.1016/j.ebiom.2018.09.015",
+        )
+        self.assertEqual(
+            utils.normalize_doi_query("https://dx.doi.org/10.1016/j.ebiom.2018.09.015"),
+            "doi.org/10.1016/j.ebiom.2018.09.015",
+        )
+        self.assertEqual(
+            utils.sanitize_doi_filename("https://doi.org/10.1016/j.ebiom.2018.09.015"),
+            "doi.org_10.1016_j.ebiom.2018.09.015",
+        )
+
+        bibtex = """
+        @article{yousefzadeh2018fisetin,
+          title={Fisetin is a senotherapeutic that extends health and lifespan},
+          author={Yousefzadeh, Matthew J and Zhu, YI and McGowan, Sara J and Angelini, Luise and Fuhrmann-Stroissnigg, Heike and Xu, Ming and Ling, Yuan Yuan and Melos, Kendra I and Pirtskhalava, Tamar and Inman, Christina L and others},
+          journal={EBioMedicine},
+          volume={36},
+          pages={18--28},
+          year={2018},
+          publisher={Elsevier}
+        }
+        """.strip()
+        nbib = utils.bibtex_to_nbib(
+            bibtex,
+            doi_url="https://doi.org/10.1016/j.ebiom.2018.09.015",
+        )
+        self.assertIn("TI  - Fisetin is a senotherapeutic that extends health and lifespan.", nbib)
+        self.assertIn("AU  - Yousefzadeh MJ", nbib)
+        self.assertIn("AU  - Zhu Y", nbib)
+        self.assertIn("AU  - Ling YY", nbib)
+        self.assertIn("AU  - et al", nbib)
+        self.assertIn("FAU - Yousefzadeh, Matthew J", nbib)
+        self.assertIn("JT  - EBioMedicine", nbib)
+        self.assertIn("VL  - 36", nbib)
+        self.assertIn("PG  - 18-28", nbib)
+        self.assertIn("DP  - 2018", nbib)
+        self.assertIn("PB  - Elsevier", nbib)
+        self.assertIn("AID - 10.1016/j.ebiom.2018.09.015 [doi]", nbib)
 
     def test_get_downloads_dir_uses_home_downloads(self) -> None:
         with patch("platform.system", return_value="Windows"):
