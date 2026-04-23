@@ -69,22 +69,23 @@ class ProcessingTests(unittest.TestCase):
     def test_partition_inline_reference_building_and_mapping_file(self) -> None:
         class DummyLooper:
             def accepts(self, url):
-                return "accept" in url
+                return "accept" in url or "doi.org" in url
 
             def fetch_references_from_repos(self, reference):
                 reference.nbib_path = "exists.nbib"
 
-        urls = ["accept://one", "reject://two", "accept://three"]
+        urls = ["accept://one", "reject://two", "accept://three", "[https://doi.org/10.1/example]"]
         accepted, rejected = processing.partition_urls(urls, DummyLooper())
-        self.assertEqual(accepted, ["accept://one", "accept://three"])
+        self.assertEqual(accepted, ["accept://one", "accept://three", "[https://doi.org/10.1/example]"])
         self.assertEqual(rejected, ["reject://two"])
 
         refs = processing.build_inline_references(accepted, DummyLooper())
-        self.assertEqual(len(refs), 2)
+        self.assertEqual(len(refs), 3)
         refs[0].parsed_nbib = make_inline_reference(index=1).parsed_nbib
         refs[1].parsed_nbib = make_inline_reference(index=2, doi="10.1000/other").parsed_nbib
+        refs[2].parsed_nbib = make_inline_reference(index=3, url="https://doi.org/10.1/example", doi="10.1/example").parsed_nbib
         processing.assign_unique_inline_indices(refs)
-        self.assertEqual([ref.inline_index for ref in refs], [1, 2])
+        self.assertEqual([ref.inline_index for ref in refs], [1, 2, 3])
 
         with workspace_dir() as tmp_path:
             first_path = tmp_path / "one.nbib"
@@ -93,9 +94,10 @@ class ProcessingTests(unittest.TestCase):
             second_path.write_text("y", encoding="utf-8")
             refs[0].nbib_path = str(first_path)
             refs[1].nbib_path = str(second_path)
+            refs[2].nbib_path = str(second_path)
             style = DummyStyle()
             formatted = processing.build_formatted_references(refs, style)
-            self.assertEqual(len(formatted), 2)
+            self.assertEqual(len(formatted), 3)
             rows = processing.resolve_mapping_columns(None)
             mapping_path = tmp_path / "mapping.csv"
             written = processing.write_mapping_file(mapping_path, rows, formatted)
@@ -210,3 +212,58 @@ class ProcessingTests(unittest.TestCase):
 
             with self.assertRaises(pyrefman.NoUrlsFoundError):
                 pyrefman.process_file_citations("No links here", reference_style=style)
+
+    def test_process_file_citations_with_bracketed_plain_doi_urls(self) -> None:
+        class DummyLooper:
+            def __init__(self, citations_dir):
+                self.citations_dir = citations_dir
+                self.seen = []
+
+            def accepts(self, url):
+                self.seen.append(url)
+                return url.startswith("https://doi.org/")
+
+            def fetch_references_from_repos(self, reference):
+                reference.nbib_path = str(self.path)
+                doi = reference.url.replace("https://doi.org/", "")
+                reference.parsed_nbib = make_inline_reference(
+                    url=reference.url,
+                    title=f"Example {doi}",
+                    doi=doi,
+                    pmid="",
+                ).parsed_nbib
+
+        with workspace_dir() as tmp_path:
+            nbib_path = tmp_path / "ref.nbib"
+            nbib_path.write_text(
+                "\n".join(
+                    [
+                        "TI  - Example DOI paper.",
+                        "AU  - Doe JA",
+                        "JT  - Test Journal",
+                        "DP  - 2024",
+                    ]
+                ) + "\n",
+                encoding="utf-8",
+            )
+            looper = DummyLooper(tmp_path)
+            looper.path = nbib_path
+            text = (
+                "some scientific statement [https://doi.org/10.1016/j.ebiom.2018.09.015]. "
+                "Another statement [https://doi.org/10.1016/j.devcel.2014.11.012]."
+            )
+
+            with patch("pyrefman.SourcesLooper", return_value=looper), patch("pyrefman.WebDriver") as driver_cls:
+                driver_cls.return_value.quit_driver = MagicMock()
+                result = pyrefman.process_file_citations(
+                    text,
+                    save_output=False,
+                    reference_style=DummyStyle(),
+                    return_details=True,
+                )
+
+            self.assertIn("[1]", result["markdown_text"])
+            self.assertIn("[2]", result["markdown_text"])
+            self.assertIn("# References", result["markdown_text"])
+            self.assertIn("https://doi.org/10.1016/j.ebiom.2018.09.015", looper.seen)
+            self.assertIn("https://doi.org/10.1016/j.devcel.2014.11.012", looper.seen)
