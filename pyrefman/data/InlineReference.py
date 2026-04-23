@@ -59,7 +59,7 @@ class InlineReference:
         return title
 
     def get_nbib_volume(self) -> str:
-        volume = self.get_nbib_field("VI") or self.get_nbib_field("VOLUME") or ""
+        volume = self.get_nbib_field("VI") or self.get_nbib_field("VL") or self.get_nbib_field("VOLUME") or ""
         if isinstance(volume, list):
             volume = volume[0] if volume else ""
 
