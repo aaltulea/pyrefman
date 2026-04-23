@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from pyrefman.WebDriver import By, WebDriver, expect_download_save_as
 from pyrefman.sources.BioRxivSource import BioRxivSource
+from pyrefman.sources.DoiReferencesSource import DoiReferencesSource
 from pyrefman.sources.NCBIGeoSource import NCBIGeoSource
 from pyrefman.sources.PubMedSource import PubMedSource
 from pyrefman.sources.SourcesLooper import SourcesLooper
@@ -99,6 +100,9 @@ class FakePage:
     def evaluate(self, script):
         return self.evaluate_result
 
+    def wait_for_load_state(self, state=None):
+        self.last_load_state = state
+
 
 class FakeContext:
     def __init__(self, page: FakePage) -> None:
@@ -166,11 +170,66 @@ class FakeTextLocator:
             return FakeLocatorCollection(self.anchors)
         return self.children.get(selector, FakeLocatorCollection([]))
 
+    def wait_for(self, state=None, timeout=None):
+        self.wait_args = (state, timeout)
+
     def count(self):
         return len(self.anchors)
 
     def nth(self, index):
         return self.anchors[index]
+
+
+class FakeSearchInput:
+    def __init__(self) -> None:
+        self.filled = None
+        self.pressed = []
+
+    def fill(self, value):
+        self.filled = value
+
+    def press(self, key):
+        self.pressed.append(key)
+
+
+class FakeScholarResult:
+    def __init__(self, cite_button=None) -> None:
+        self.cite_button = cite_button
+
+    def locator(self, selector):
+        if selector == "a.gs_or_cit":
+            return FakeLocatorCollection([self.cite_button] if self.cite_button else [])
+        return FakeLocatorCollection([])
+
+
+class FakeScholarLink(FakeClickTarget):
+    def __init__(self, text="", href="", error: Exception | None = None) -> None:
+        super().__init__(error=error)
+        self._text = text
+        self._href = href
+
+    def inner_text(self):
+        return self._text
+
+    def text_content(self):
+        return self._text
+
+    def get_attribute(self, name):
+        return self._href if name == "href" else None
+
+
+class FakeScholarPage(FakePage):
+    def __init__(self, bibtex_text: str) -> None:
+        super().__init__()
+        self.pre_locator = FakeLocatorCollection([FakeTextLocator(bibtex_text)])
+        self.body_locator = FakeLocatorCollection([FakeTextLocator("")])
+
+    def locator(self, value):
+        if value == "pre":
+            return self.pre_locator
+        if value == "body":
+            return self.body_locator
+        return super().locator(value)
 
 
 class SourcesAndWebDriverTests(unittest.TestCase):
@@ -306,6 +365,8 @@ class SourcesAndWebDriverTests(unittest.TestCase):
         source_reject.accepts.return_value = False
 
         with patch("pyrefman.sources.SourcesLooper.PubMedSource", return_value=source_accept), patch(
+            "pyrefman.sources.SourcesLooper.DoiReferencesSource", return_value=source_reject
+        ), patch(
             "pyrefman.sources.SourcesLooper.BioRxivSource", return_value=source_reject
         ), patch("pyrefman.sources.SourcesLooper.NCBIGeoSource", return_value=source_reject):
             looper = SourcesLooper(Path.cwd())
@@ -482,3 +543,92 @@ class SourcesAndWebDriverTests(unittest.TestCase):
         bad_ref = make_inline_reference(url="https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=")
         with patch("builtins.print"):
             self.assertIsNone(source.download(bad_ref))
+
+    def test_doi_references_source(self) -> None:
+        source = DoiReferencesSource(Path.cwd())
+        doi_url = "https://doi.org/10.1016/j.ebiom.2018.09.015"
+        self.assertTrue(source.accepts(doi_url))
+        self.assertFalse(source.accepts("doi.org/10.1016/j.ebiom.2018.09.015"))
+        self.assertFalse(source.accepts("https://example.com/10.1016/j.ebiom.2018.09.015"))
+        self.assertEqual(source._normalize_query(doi_url), "doi.org/10.1016/j.ebiom.2018.09.015")
+        self.assertEqual(
+            source._target_path(doi_url).name,
+            "doi.org_10.1016_j.ebiom.2018.09.015.nbib",
+        )
+
+        ref = make_inline_reference(url=doi_url)
+        with workspace_dir() as tmp_path:
+            source = DoiReferencesSource(tmp_path)
+            existing = source._target_path(doi_url)
+            existing.write_text("x", encoding="utf-8")
+            self.assertEqual(source.download(ref), existing)
+
+            existing.unlink()
+            page = FakeScholarPage(
+                """
+                @article{yousefzadeh2018fisetin,
+                  title={Fisetin is a senotherapeutic that extends health and lifespan},
+                  author={Yousefzadeh, Matthew J and Zhu, Yi and McGowan, Sara J and others},
+                  journal={EBioMedicine},
+                  volume={36},
+                  pages={18--28},
+                  year={2018},
+                  publisher={Elsevier}
+                }
+                """.strip()
+            )
+            search_input = FakeSearchInput()
+            container = FakeWaitableLocator()
+            cite_button = FakeClickTarget()
+            driver = MagicMock()
+            driver.navigate_to = MagicMock()
+            driver.get_page.return_value = page
+
+            def find_element(by, value, timeout=None, state=None):
+                if value == source.SEARCH_INPUT_SELECTOR:
+                    return search_input
+                if value == source.RESULTS_CONTAINER_SELECTOR:
+                    return container
+                raise AssertionError(value)
+
+            def find_elements(by, value, timeout=None, min_count=0, state=None):
+                if value == source.RESULT_CARD_SELECTOR:
+                    return [FakeScholarResult(cite_button=cite_button)]
+                if value == source.BIBTEX_LINK_SELECTOR:
+                    return [
+                        FakeScholarLink(text="RefMan", href="https://example.com/refman"),
+                        FakeScholarLink(text="BibTeX", href="https://scholar.googleusercontent.com/scholar.bib?q=demo"),
+                    ]
+                raise AssertionError(value)
+
+            driver.find_element.side_effect = find_element
+            driver.find_elements.side_effect = find_elements
+
+            with patch("pyrefman.sources.DoiReferencesSource.WebDriver", return_value=driver):
+                written = source.download(ref)
+
+            self.assertTrue(written.exists())
+            text = written.read_text(encoding="utf-8")
+            self.assertIn("TI  - Fisetin is a senotherapeutic that extends health and lifespan.", text)
+            self.assertIn("AU  - Yousefzadeh MJ", text)
+            self.assertIn("AU  - et al", text)
+            self.assertIn("JT  - EBioMedicine", text)
+            self.assertIn("PG  - 18-28", text)
+            self.assertIn("DP  - 2018", text)
+            driver.navigate_to.assert_called_once_with(source.SCHOLAR_URL)
+            self.assertEqual(search_input.filled, "doi.org/10.1016/j.ebiom.2018.09.015")
+            self.assertEqual(search_input.pressed, ["Enter"])
+            self.assertTrue(cite_button.clicked)
+
+            driver.find_elements.side_effect = lambda by, value, timeout=None, min_count=0, state=None: (
+                [FakeScholarResult(cite_button=FakeClickTarget()), FakeScholarResult(cite_button=FakeClickTarget())]
+                if value == source.RESULT_CARD_SELECTOR
+                else []
+            )
+            failing_ref = make_inline_reference(url="https://doi.org/10.1016/j.ebiom.2018.09.016")
+            with patch("pyrefman.sources.DoiReferencesSource.WebDriver", return_value=driver), patch("builtins.print"):
+                self.assertIsNone(source.download(failing_ref))
+
+        invalid_ref = make_inline_reference(url="doi.org/10.1016/j.ebiom.2018.09.015")
+        with patch("builtins.print"):
+            self.assertIsNone(source.download(invalid_ref))
