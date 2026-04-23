@@ -76,8 +76,10 @@ or:
 
 ### Supported Sources
 
-* PubMed
-* bioRxiv
+* PubMed e.g., `[https://pubmed.ncbi.nlm.nih.gov/11111111/]`
+* bioRxiv e.g., `[https://www.biorxiv.org/content/10.64898/2026.04.20.719538v1]`
+* NCBI GEO e.g., `[https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE157563]`
+* DOI link e.g., `[https://doi.org/10.1038/s43587-026-01097-z]`
 
 ### Workflow
 
