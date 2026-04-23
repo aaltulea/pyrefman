@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 from pyrefman.Utils import (
     TANDEM_REGEX,
     build_mapping_file_rows,
+    extract_markdown_url,
     find_tandem_reference_groups,
     get_downloads_dir,
     get_output_file_path,
@@ -85,7 +86,8 @@ def partition_urls(urls: Iterable[str], source_looper) -> tuple[list[str], list[
     rejected_urls: list[str] = []
 
     for url in urls:
-        if source_looper.accepts(url):
+        routed_url = extract_markdown_url(url) or url
+        if source_looper.accepts(routed_url):
             accepted_urls.append(url)
         else:
             rejected_urls.append(url)
