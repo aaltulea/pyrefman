@@ -1,5 +1,6 @@
 from pyrefman.data import InlineReference
 from pyrefman.sources.BioRxivSource import BioRxivSource
+from pyrefman.sources.DoiReferencesSource import DoiReferencesSource
 from pyrefman.sources.NCBIGeoSource import NCBIGeoSource
 from pyrefman.sources.PubMedSource import PubMedSource
 import traceback
@@ -12,6 +13,7 @@ class SourcesLooper:
         self.citations_dir = citations_dir
         self.SOURCES = [
             PubMedSource(citations_dir),
+            DoiReferencesSource(citations_dir),
             BioRxivSource(citations_dir),
             NCBIGeoSource(citations_dir)
         ]
